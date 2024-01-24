@@ -551,7 +551,7 @@ public static DataTable ConvertToDataTable<T>(IList<T> data)
      
  }
    # UnitOfWork Pattern
-   # IUnitOfWork interfacke
+   # IUnitOfWork interface
  public interface IUnitOfWork : IDisposable
  {
      MainDBContext Context { get; }
