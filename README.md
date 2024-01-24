@@ -550,7 +550,221 @@ public static DataTable ConvertToDataTable<T>(IList<T> data)
 
      
  }
-   
+   # UnitOfWork Pattern
+   # IUnitOfWork interfacke
+ public interface IUnitOfWork : IDisposable
+ {
+     MainDBContext Context { get; }
+     void SaveChanges();
+     void BulkSaveChanges();
+     IUserInfo GetUserInfo();
+     //void BulkInsert(IEnumerable<EntityEntry> entityLst);
+ }
+  # UnitOfWork Class
+    public class UnitOfWork : IUnitOfWork, IDisposable
+  {
+      private MainDBContext _context;
 
+      private IUserInfo _user;
+
+      public UnitOfWork(IUserInfo user, DbContext DBContext)
+      {
+          _user = user;
+          if (_context == null)
+          {
+              _context = new MainDBContext(this._user, DBContext);
+          }
+      }
+
+
+      public MainDBContext Context
+      {
+          get
+          {
+              if (this._context != null)
+              {
+                  return this._context;
+              }
+              else
+              {
+                  throw new ArgumentNullException();
+              }
+          }
+      }
+
+
+      public void SaveChanges()
+      {
+          SetAdministritiveData();
+          this._context.SaveChanges();
+      }
+      public void BulkSaveChanges()
+      {
+          SetAdministritiveData();
+          this._context.BulkSaveChanges();
+      }
+
+      public void SetAdministritiveData()
+      {
+          try
+          {
+              var ccc = this.Context._dbContext.ChangeTracker.Entries().Select(c => c.State);
+
+
+              foreach (EntityEntry NewEntry in
+                        this.Context._dbContext.ChangeTracker.Entries().Where(a => a.State == EntityState.Added))
+              {
+
+                  var EntityID = NewEntry.Entity.GetType().GetProperty("EntityId", BindingFlags.Public | BindingFlags.Instance);
+                  if (EntityID != null && EntityID.CanWrite && EntityID.GetValue(NewEntry.Entity) == null)
+                  {
+                      EntityID.SetValue(NewEntry.Entity, _user.OrgId, null);
+                  }
+                  if (EntityID != null)
+                      EntityID.SetValue(NewEntry.Entity, _user.OrgId, null);
+                  var CreatedBy = NewEntry.Entity.GetType().GetProperty("CreatedBy", BindingFlags.Public | BindingFlags.Instance);
+                  if (CreatedBy != null && CreatedBy.CanWrite)
+                  {
+                      CreatedBy.SetValue(NewEntry.Entity, _user.UserId, null);
+                  }
+                  //rolback
+                  var prop = NewEntry.Entity.GetType().GetProperty("CreatedDate", BindingFlags.Public | BindingFlags.Instance);
+                  if (prop != null && prop.CanWrite)
+                  {
+                      prop.SetValue(NewEntry.Entity, DateTime.Now, null);
+                  }
+                  var IsDeleted = NewEntry.Entity.GetType().GetProperty("IsDeleted", BindingFlags.Public | BindingFlags.Instance);
+                  if (IsDeleted != null && IsDeleted.CanWrite)
+                  {
+                      IsDeleted.SetValue(NewEntry.Entity, false, null);
+                  }
+                  //Fix Replace Empty String 11-05-2016 Moghazy
+                  ReplaceEmptyString(NewEntry);
+              }
+
+              foreach (EntityEntry NewEntry in
+                         this.Context._dbContext.ChangeTracker.Entries().Where(a => a.State == EntityState.Modified))
+              {
+                  // to handle concurrency on update 
+                  var TimeStamp = NewEntry.Entity.GetType().GetProperty("ModifiedTS", BindingFlags.Public | BindingFlags.Instance);
+                  if (TimeStamp != null)
+                  {
+                      var oldv = NewEntry.OriginalValues.GetValue<byte[]>("ModifiedTS");
+                      var newv = NewEntry.CurrentValues.GetValue<byte[]>("ModifiedTS");
+                      if (!newv.SequenceEqual(oldv))
+                          throw new DBConcurrencyException();
+                  }
+                  // No need To Edit Entity ID For Edit Action 
+                  //var EntityID = NewEntry.Entity.GetType().GetProperty("EntityID", BindingFlags.Public | BindingFlags.Instance);
+                  //if (EntityID != null && EntityID.CanWrite)
+                  //    EntityID.SetValue(NewEntry.Entity, _user.OrgId, null);
+                  var UpdatedBy = NewEntry.Entity.GetType().GetProperty("UpdatedBy", BindingFlags.Public | BindingFlags.Instance);
+                  if (UpdatedBy != null && UpdatedBy.CanWrite)
+                      UpdatedBy.SetValue(NewEntry.Entity, _user.UserId, null);
+                  var prop = NewEntry.Entity.GetType().GetProperty("UpdatedDate", BindingFlags.Public | BindingFlags.Instance);
+                  if (prop != null && prop.CanWrite)
+                      prop.SetValue(NewEntry.Entity, DateTime.Now, null);
+
+                  ///// in case deletion logically not physically 
+                  /// hashed it due to we does not have DeletedBy and DeletedDate
+                  //var IsDeleted = NewEntry.Entity.GetType().GetProperty("IsDeleted", BindingFlags.Public | BindingFlags.Instance);
+                  //if (IsDeleted != null && IsDeleted.CanWrite)
+                  //{
+                  //    bool oldv, newv;
+
+                  //    if (NewEntry.OriginalValues["IsDeleted"].GetType() == typeof(bool))
+                  //    {
+                  //        oldv = NewEntry.OriginalValues.GetValue<bool>("IsDeleted");
+                  //        newv = NewEntry.CurrentValues.GetValue<bool>("IsDeleted");
+                  //    }
+                  //    else
+                  //    {
+                  //        oldv = Convert.ToBoolean(NewEntry.OriginalValues.GetValue<bool?>("IsDeleted"));
+                  //        newv = Convert.ToBoolean(NewEntry.CurrentValues.GetValue<bool?>("IsDeleted"));
+                  //    }
+
+
+                  //    if (oldv == false && newv == true)
+                  //    {
+                  //        var deletedBy = NewEntry.Entity.GetType().GetProperty("DeletedBy", BindingFlags.Public | BindingFlags.Instance);
+                  //        var deletedDate = NewEntry.Entity.GetType().GetProperty("DeletedDate", BindingFlags.Public | BindingFlags.Instance);
+                  //        if (deletedBy != null && deletedBy.CanWrite)
+                  //        {
+                  //            deletedBy.SetValue(NewEntry.Entity, _user.UserId, null);
+                  //        }
+                  //        if (deletedDate != null && deletedDate.CanWrite)
+                  //        {
+                  //            deletedDate.SetValue(NewEntry.Entity, DateTime.Now, null);
+                  //        }
+                  //    }
+                  //}
+                  //Fix Replace Empty String 11-05-2016 Moghazy
+                  //ReplaceEmptyString(NewEntry);
+              }
+          }
+          catch (Exception ex)
+          {
+
+          }
+      }
+
+      private static void ReplaceEmptyString(EntityEntry entity)
+      {
+          string str = typeof(string).Name;
+          var properties = from p in entity.Entity.GetType().GetProperties()
+                           where p.PropertyType.Name == str
+                           select p;
+
+          foreach (var item in properties)
+          {
+              string value = (string)item.GetValue(entity.Entity, null);
+              if (value != null && value.Trim().Length == 0)
+              {
+
+                  item.SetValue(entity.Entity, null, null);
+
+              }
+          }
+      }
+
+
+
+      //public void BulkInsert(IEnumerable<EntityEntry> entityLst)
+      //{
+      //    this._context.BulkInsert(entityLst);
+      //}
+      #region  Dispose
+
+
+      private bool disposed = false;
+
+      protected virtual void Dispose(bool disposing)
+      {
+          if (!this.disposed)
+          {
+              if (disposing)
+              {
+                  this._context.Dispose();
+              }
+          }
+          this.disposed = true;
+      }
+      public void Dispose()
+      {
+          Dispose(true);
+          GC.SuppressFinalize(this);
+      }
+      #endregion
+
+      internal IUserInfo UserInfo
+      {
+          get { return this._user; }
+      }
+
+      public IUserInfo GetUserInfo()
+      {
+          return this._user;
+      }
+  }
     
     
